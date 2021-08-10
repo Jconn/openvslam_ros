@@ -20,6 +20,11 @@ system::system(const std::shared_ptr<openvslam::config>& cfg, const std::string&
       transform_listener_(std::make_shared<tf2_ros::TransformListener>(*tf_)) {
     custom_qos_.depth = 1;
     exec_.add_node(node_);
+    odom_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
+        "/openvslam_odom", 1,
+        std::bind(&system::odom_callback,
+                  this, std::placeholders::_1));
+
     init_pose_sub_ = node_->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
         "/initialpose", 1,
         std::bind(&system::init_pose_callback,
@@ -85,6 +90,10 @@ void system::setParams() {
     // Publish pose's timestamp in the future
     transform_tolerance_ = 0.5;
     transform_tolerance_ = node_->declare_parameter("transform_tolerance", transform_tolerance_);
+}
+
+void system::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    latest_odom_ = *msg;
 }
 
 void system::init_pose_callback(
@@ -244,6 +253,45 @@ void rgbd::callback(const sensor_msgs::msg::Image::ConstSharedPtr& color, const 
     const double timestamp = tp_1.seconds();
 
     // input the current frame and estimate the camera pose
+    //
+    //turn latest_odom_ into a 4x4 matrix to be used in opencv coordinates
+    /*
+     *
+    Eigen::Matrix3d rot(cam_pose_wc.block<3, 3>(0, 0));
+    Eigen::Translation3d trans(cam_pose_wc.block<3, 1>(0, 3));
+    Eigen::Affine3d map_to_camera_affine(trans * rot);
+    Eigen::Matrix3d rot_ros_to_cv_map_frame;
+    rot_ros_to_cv_map_frame << 0, 0, 1,
+        -1, 0, 0,
+        0, -1, 0;
+
+    // Transform map frame from CV coordinate system to ROS coordinate system
+    map_to_camera_affine.prerotate(rot_ros_to_cv_map_frame);
+    */
+
+    Eigen::Matrix3d rot_ros_to_cv_map_frame, rot_cv_to_ros_map_frame;
+    rot_ros_to_cv_map_frame << 0, 0, 1,
+        -1, 0, 0,
+        0, -1, 0;
+    //the inverse of a transformation matrix is its transpose
+    rot_ros_to_cv_map_frame = rot_cv_to_ros_map_frame.transpose();
+    tf2::Quaternion quat_tf;
+    tf2::convert(latest_odom_.pose.pose.orientation, quat_tf);
+    Eigen::Quaterniond q;
+    q.x() = quat_tf.x();
+    q.y() = quat_tf.y();
+    q.z() = quat_tf.z();
+    q.w() = quat_tf.w();
+    Eigen::Matrix3d ros_robot_rot = q.normalized().toRotationMatrix();
+    //transform the robot orientation matrix into the cv frame
+    Eigen::Matrix3d cv_robot_rot = rot_ros_to_cv_map_frame * ros_robot_rot;
+
+    Eigen::Matrix4d robot_pose; 
+    Eigen::Vector3d trans(latest_odom_.pose.pose.position.x, latest_odom_.pose.pose.position.y, latest_odom_.pose.pose.position.z);
+
+    robot_pose.block<3,3>(0,0) = cv_robot_rot;
+    robot_pose.block<3,1>(0,3) = trans;
+
     auto cam_pose_wc = SLAM_.feed_RGBD_frame(colorcv, depthcv, timestamp, mask_);
 
     const rclcpp::Time tp_2 = node_->now();

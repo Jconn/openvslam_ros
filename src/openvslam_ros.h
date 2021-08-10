@@ -35,6 +35,7 @@ public:
     rmw_qos_profile_t custom_qos_;
     cv::Mat mask_;
     std::vector<double> track_times_;
+    std::shared_ptr<rclcpp::Subscription<nav_msgs::msg::Odometry>> odom_sub_;
     std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Odometry>> pose_pub_;
     std::shared_ptr<rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>>
         init_pose_sub_;
@@ -44,9 +45,12 @@ public:
     std::shared_ptr<tf2_ros::TransformListener> transform_listener_;
     bool publish_tf_;
     double transform_tolerance_;
+    nav_msgs::msg::Odometry latest_odom_;
+
 
 private:
     void init_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
+    void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
 };
 
 class mono : public system {
