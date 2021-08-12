@@ -46,6 +46,7 @@ public:
     bool publish_tf_;
     double transform_tolerance_;
     nav_msgs::msg::Odometry latest_odom_;
+    bool odom_updated_ = false;
 
 
 private:

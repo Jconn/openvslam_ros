@@ -10,6 +10,11 @@
 #include <opencv2/imgcodecs.hpp>
 #include <Eigen/Geometry>
 
+static std::string toString(const Eigen::MatrixXd& mat) {
+    std::stringstream ss;
+    ss << mat;
+    return ss.str();
+}
 namespace openvslam_ros {
 system::system(const std::shared_ptr<openvslam::config>& cfg, const std::string& vocab_file_path, const std::string& mask_img_path)
     : SLAM_(cfg, vocab_file_path), cfg_(cfg), node_(std::make_shared<rclcpp::Node>("run_slam")), custom_qos_(rmw_qos_profile_default),
@@ -93,6 +98,7 @@ void system::setParams() {
 }
 
 void system::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    odom_updated_ = true;
     latest_odom_ = *msg;
 }
 
@@ -156,6 +162,7 @@ void system::init_pose_callback(
                                    * initialpose_affine * base_link_to_camera_affine)
                                       .matrix();
 
+    //this value is immediately inversed (is the wc variable) to be converted to cw variable
     if (!SLAM_.update_pose(cam_pose_cv)) {
         RCLCPP_ERROR(node_->get_logger(), "Can not set initial pose");
     }
@@ -268,29 +275,78 @@ void rgbd::callback(const sensor_msgs::msg::Image::ConstSharedPtr& color, const 
     // Transform map frame from CV coordinate system to ROS coordinate system
     map_to_camera_affine.prerotate(rot_ros_to_cv_map_frame);
     */
+    if (odom_updated_) {
+        Eigen::Matrix3d rot_cv_to_ros_map_frame;
 
-    Eigen::Matrix3d rot_ros_to_cv_map_frame, rot_cv_to_ros_map_frame;
-    rot_ros_to_cv_map_frame << 0, 0, 1,
-        -1, 0, 0,
-        0, -1, 0;
-    //the inverse of a transformation matrix is its transpose
-    rot_ros_to_cv_map_frame = rot_cv_to_ros_map_frame.transpose();
-    tf2::Quaternion quat_tf;
-    tf2::convert(latest_odom_.pose.pose.orientation, quat_tf);
-    Eigen::Quaterniond q;
-    q.x() = quat_tf.x();
-    q.y() = quat_tf.y();
-    q.z() = quat_tf.z();
-    q.w() = quat_tf.w();
-    Eigen::Matrix3d ros_robot_rot = q.normalized().toRotationMatrix();
-    //transform the robot orientation matrix into the cv frame
-    Eigen::Matrix3d cv_robot_rot = rot_ros_to_cv_map_frame * ros_robot_rot;
+        //this variable handles transform FROM ros TO cv. Don't know why it was named this way
+        rot_cv_to_ros_map_frame << 0, -1, 0,
+            0, 0, -1,
+            1, 0, 0;
 
-    Eigen::Matrix4d robot_pose; 
-    Eigen::Vector3d trans(latest_odom_.pose.pose.position.x, latest_odom_.pose.pose.position.y, latest_odom_.pose.pose.position.z);
+        //the inverse of a transformation matrix is its transpose
+        tf2::Quaternion quat_tf;
+        tf2::convert(latest_odom_.pose.pose.orientation, quat_tf);
 
-    robot_pose.block<3,3>(0,0) = cv_robot_rot;
-    robot_pose.block<3,1>(0,3) = trans;
+        Eigen::Translation3d translation(latest_odom_.pose.pose.position.x, latest_odom_.pose.pose.position.y, latest_odom_.pose.pose.position.z);
+        Eigen::Vector3d trans(latest_odom_.pose.pose.position.x, latest_odom_.pose.pose.position.y, latest_odom_.pose.pose.position.z);
+        Eigen::Quaterniond q(
+            quat_tf.w(),
+            quat_tf.x(),
+            quat_tf.y(),
+            quat_tf.z()
+            );
+        
+        Eigen::Affine3d odom_affine(translation * q);
+
+        Eigen::Matrix4d odom_mat= (rot_cv_to_ros_map_frame *odom_affine).inverse().matrix(); 
+        
+        /*
+         *
+         *
+         *
+    // Target transform is map_cv -> camera_link and known parameters are following:
+    //   rot_cv_to_ros_map_frame: T(map_cv -> map)
+    //   map_to_initialpose_frame_affine: T(map -> `msg->header.frame_id`)
+    //   initialpose_affine: T(`msg->header.frame_id` -> base_link)
+    //   base_link_to_camera_affine: T(base_link -> camera_link)
+    // The flow of the transformation is as follows:
+    //   map_cv -> map -> `msg->header.frame_id` -> base_link -> camera_link
+    Eigen::Matrix4d cam_pose_cv = (rot_cv_to_ros_map_frame * map_to_initialpose_frame_affine
+                                   * initialpose_affine * base_link_to_camera_affine)
+                                      .matrix();
+
+         */
+
+        Eigen::Matrix3d ros_robot_rot = q.normalized().toRotationMatrix();
+        //transform the robot orientation matrix into the cv frame
+        Eigen::Matrix3d cv_robot_rot = rot_cv_to_ros_map_frame * ros_robot_rot;
+        Eigen::Vector3d cv_robot_trans = rot_cv_to_ros_map_frame * trans;
+
+        Eigen::Matrix4d robot_pose = Eigen::Matrix4d::Identity();
+
+        //invert these to make them in the same frame as openvslam
+        //
+        Eigen::Matrix3d camera_centric_rot = cv_robot_rot.inverse();
+        Eigen::Vector3d camera_centric_trans = -camera_centric_rot * cv_robot_trans;
+        //robot_pose.block<3,3>(0,0) = cv_robot_rot;
+        //robot_pose.block<3,1>(0,3) = trans;
+        robot_pose.block<3, 3>(0, 0) = camera_centric_rot; 
+        robot_pose.block<3, 1>(0, 3) = camera_centric_trans; 
+        //robot_pose = robot_pose;
+
+        RCLCPP_INFO(node_->get_logger(), "odom_mat: \n%s\n, robot_pose:\n%s\n", toString(odom_mat).c_str(), toString(robot_pose).c_str());
+        //rot_cw_ = cam_pose_cw_.block<3, 3>(0, 0);
+        //rot_wc_ = rot_cw_.transpose();
+        //trans_cw_ = cam_pose_cw_.block<3, 1>(0, 3);
+        //cam_center_ = -rot_cw_.transpose() * trans_cw_;
+
+        //SLAM_.update_odometry(robot_pose);
+        SLAM_.update_odometry(odom_mat);
+        //    0.999997 -0.000992868  -0.00210688   0.00836791
+        //-0.000983642     -0.99999   0.00437558    -0.189576
+        //   0.0021112   0.00437349     0.999988     0.615912
+        //          -0           -0           -0           -1
+    }
 
     auto cam_pose_wc = SLAM_.feed_RGBD_frame(colorcv, depthcv, timestamp, mask_);
 
