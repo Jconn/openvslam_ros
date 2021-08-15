@@ -293,13 +293,12 @@ void rgbd::callback(const sensor_msgs::msg::Image::ConstSharedPtr& color, const 
             quat_tf.w(),
             quat_tf.x(),
             quat_tf.y(),
-            quat_tf.z()
-            );
-        
+            quat_tf.z());
+
         Eigen::Affine3d odom_affine(translation * q);
 
-        Eigen::Matrix4d odom_mat= (rot_cv_to_ros_map_frame *odom_affine).inverse().matrix(); 
-        
+        Eigen::Matrix4d odom_mat = (rot_cv_to_ros_map_frame * odom_affine).inverse().matrix();
+
         /*
          *
          *
@@ -330,18 +329,28 @@ void rgbd::callback(const sensor_msgs::msg::Image::ConstSharedPtr& color, const 
         Eigen::Vector3d camera_centric_trans = -camera_centric_rot * cv_robot_trans;
         //robot_pose.block<3,3>(0,0) = cv_robot_rot;
         //robot_pose.block<3,1>(0,3) = trans;
-        robot_pose.block<3, 3>(0, 0) = camera_centric_rot; 
-        robot_pose.block<3, 1>(0, 3) = camera_centric_trans; 
+        robot_pose.block<3, 3>(0, 0) = camera_centric_rot;
+        robot_pose.block<3, 1>(0, 3) = camera_centric_trans;
+        Eigen::Vector3d linear_vel(latest_odom_.twist.twist.linear.x,
+                                   latest_odom_.twist.twist.linear.y,
+                                   latest_odom_.twist.twist.linear.z);
+
+        Eigen::Vector3d angular_vel(latest_odom_.twist.twist.angular.x,
+                                    latest_odom_.twist.twist.angular.y,
+                                    latest_odom_.twist.twist.angular.z);
+
         //robot_pose = robot_pose;
 
-        RCLCPP_INFO(node_->get_logger(), "odom_mat: \n%s\n, robot_pose:\n%s\n", toString(odom_mat).c_str(), toString(robot_pose).c_str());
+        //RCLCPP_INFO(node_->get_logger(), "odom_mat: \n%s\n, robot_pose:\n%s\n", toString(odom_mat).c_str(), toString(robot_pose).c_str());
         //rot_cw_ = cam_pose_cw_.block<3, 3>(0, 0);
         //rot_wc_ = rot_cw_.transpose();
         //trans_cw_ = cam_pose_cw_.block<3, 1>(0, 3);
         //cam_center_ = -rot_cw_.transpose() * trans_cw_;
 
         //SLAM_.update_odometry(robot_pose);
-        SLAM_.update_odometry(odom_mat);
+        //double timestamp = latest_odom_.header.stamp.o
+        rclcpp::Time msg_time(latest_odom_.header.stamp);
+        SLAM_.update_odometry(odom_mat, linear_vel, angular_vel, msg_time.seconds());
         //    0.999997 -0.000992868  -0.00210688   0.00836791
         //-0.000983642     -0.99999   0.00437558    -0.189576
         //   0.0021112   0.00437349     0.999988     0.615912
