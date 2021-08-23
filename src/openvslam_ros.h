@@ -20,7 +20,9 @@
 
 #include <opencv2/core/core.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/imu.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+
 
 namespace openvslam_ros {
 class system {
@@ -39,6 +41,7 @@ public:
     std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Odometry>> pose_pub_;
     std::shared_ptr<rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>>
         init_pose_sub_;
+    std::shared_ptr<rclcpp::Subscription<sensor_msgs::msg::Imu>> imu_sub_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> map_to_odom_broadcaster_;
     std::string odom_frame_, map_frame_, base_link_, camera_link_;
     std::unique_ptr<tf2_ros::Buffer> tf_;
@@ -46,12 +49,15 @@ public:
     bool publish_tf_;
     double transform_tolerance_;
     nav_msgs::msg::Odometry latest_odom_;
-    bool odom_updated_ = false;
 
 
 private:
+    rclcpp::Time init_time_;
+    bool init_imu_sent_ = false;
+    bool init_pose_established_ = false;
     void init_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg);
 };
 
 class mono : public system {
