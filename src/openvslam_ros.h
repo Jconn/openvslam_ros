@@ -58,6 +58,7 @@ private:
     void init_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg);
+    void imu_odom_callback(const sensor_msgs::msg::Imu::SharedPtr msg);
 };
 
 class mono : public system {

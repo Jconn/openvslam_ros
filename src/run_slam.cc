@@ -81,12 +81,10 @@ void tracking(const std::shared_ptr<openvslam::config>& cfg, const std::string& 
         }
     });
 #endif
-
-    rclcpp::Rate rate(50);
+    rclcpp::Rate rate(300);
     ros->setParams();
     while (rclcpp::ok()) {
-        ros->exec_.spin_some();
-        rate.sleep();
+        ros->exec_.spin();
     }
 
     // automatically close the viewer

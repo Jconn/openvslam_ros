@@ -36,9 +36,43 @@ system::system(const std::shared_ptr<openvslam::config>& cfg, const std::string&
                   this, std::placeholders::_1));
 
     imu_sub_ = node_->create_subscription<sensor_msgs::msg::Imu>(
-        "/imu/filter_data", 1,
-        std::bind(&system::imu_callback,
+        "/imu/filter_data", 80,
+        std::bind(&system::imu_odom_callback,
                   this, std::placeholders::_1));
+}
+
+void system::imu_odom_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
+    //imu_callback(msg);
+    rclcpp::Time imu_msg_time(msg->header.stamp);
+    const double timestamp = imu_msg_time.seconds();
+
+    Eigen::Matrix3d rot_cam_to_imu, rot_imu_to_cam;
+    rot_cam_to_imu << 0.0148655429818, -0.999880929698, 0.00414029679422,
+        0.999557249008, 0.0149672133247, 0.025715529948,
+        -0.0257744366974, 0.00375618835797, 0.999660727178;
+    rot_imu_to_cam = rot_cam_to_imu.inverse();
+
+    Eigen::Vector3d imu_vel(msg->angular_velocity.x,
+                            msg->angular_velocity.y,
+                            msg->angular_velocity.z);
+
+    Eigen::Matrix4d imu_mat = Eigen::Matrix4d::Identity();
+    imu_mat.block<3, 1>(0, 3) = imu_vel;
+    Eigen::Matrix4d cam_transform_mat = Eigen::Matrix4d::Identity();
+    Eigen::Matrix3d rot_cv_to_ros_map_frame;
+
+    //this variable handles transform FROM ros TO cv. Don't know why it was named this way
+    rot_cv_to_ros_map_frame << 0, -1, 0,
+        0, 0, -1,
+        1, 0, 0;
+    cam_transform_mat.block<3, 3>(0, 0) = /*rot_imu_to_cam **/ rot_cv_to_ros_map_frame;
+    //(rot_cam_to_imu * imu_vel);
+
+    Eigen::Matrix4d cam_angular_mat = cam_transform_mat * imu_mat;
+    Eigen::Vector3d cam_ang_vel = cam_angular_mat.block<3, 1>(0, 3);
+
+    //RCLCPP_INFO(node_->get_logger(), "imu vel %s vs cam vel %s", toString(imu_vel).c_str(), toString(cam_ang_vel).c_str());
+    SLAM_.angular_vel(timestamp, cam_ang_vel);
 }
 
 void system::imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
@@ -59,7 +93,7 @@ void system::imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg) {
     }
 
     std::shared_ptr<geometry_msgs::msg::PoseWithCovarianceStamped> init_pose = std::make_shared<geometry_msgs::msg::PoseWithCovarianceStamped>();
-    init_pose->pose.pose.position.x = 0; 
+    init_pose->pose.pose.position.x = 0;
     init_pose->pose.pose.position.y = 0;
     init_pose->pose.pose.position.z = 0;
     init_pose->pose.pose.orientation.x = msg->orientation.x;
